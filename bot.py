@@ -5,13 +5,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 👉 LỆNH MENU (Hiển thị danh sách lệnh)
     if user_input.strip() == "/menu":
         await update.message.reply_text("""
-📋 DANH SÁCH LỆNH – 指令列表
-/start - Bắt đầu sử dụng bot – 启动机器人
-/stop - Dừng bot – 停止机器人
-/menu - Hiển thị menu chức năng – 显示功能菜单
-/translate - Dịch văn bản (Việt - Trung) – 翻译文本（越南语 - 中文）
-/reset - Xoá toàn bộ trí nhớ hội thoại – 清除所有对话记忆
-""")
+     📋 DANH SÁCH LỆNH – 指令列表
+    /start - Bắt đầu sử dụng bot – 启动机器人
+    /stop - Dừng bot – 停止机器人
+    /menu - Hiển thị menu chức năng – 显示功能菜单
+    /translate - Dịch văn bản (Việt - Trung) – 翻译文本（越南语 - 中文）
+    /reset - Xoá toàn bộ trí nhớ hội thoại – 清除所有对话记忆
+    """)
         return
 
     # 👉 LỆNH DỊCH (Bắt đầu bằng dấu "/")
