@@ -2,19 +2,17 @@ import openai
 import os
 import json
 import re
-from telegram import Update, Message, Chat
+from telegram import Update, Message
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# ======= THIẾT LẬP ===========
 openai.api_key = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MODEL = "gpt-3.5-turbo"
-ADMIN_ID = 6902075720  # Thay bằng ID admin của bạn
+ADMIN_ID = 6902075720  # Sửa nếu bạn đổi admin
 ADMIN_USERNAME = "sunshine168888"
 
-# ======= QUẢN LÝ FILE =========
 def load_json(filename, default):
     try:
         with open(filename, "r", encoding="utf-8") as f:
@@ -26,11 +24,10 @@ def save_json(filename, data):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ======= KHỞI TẠO =========
 user_histories = load_json("memory.json", {})
-auto_mode = load_json("auto_mode.json", {})        # {group_id: {"auto_translate": True/False, ...}}
-allowed_groups = set(load_json("active_groups.json", []))   # group_id đã bật bot
-mods = set(load_json("mods.json", []))      # danh sách @username mod
+auto_mode = load_json("auto_mode.json", {})
+allowed_groups = set(load_json("active_groups.json", []))
+mods = set(load_json("mods.json", []))
 
 def save_all():
     save_json("memory.json", user_histories)
@@ -38,7 +35,6 @@ def save_all():
     save_json("active_groups.json", list(allowed_groups))
     save_json("mods.json", list(mods))
 
-# ======= HÀM TIỆN ÍCH =========
 def is_group(update: Update):
     return update.effective_chat and update.effective_chat.type in ["group", "supergroup"]
 
@@ -86,7 +82,12 @@ def is_trivial(text):
     return bool(re.fullmatch(r"[ .!?,:;…/\\\\|()\\[\\]\"'@#%^&*0-9\\-_=+~`♥️❤️👍😂😁🤔🥲😭🙂😉😅😆😇👀🌹💯⭐️🔥🙏🍀🍻🍺🍵☕️]*", text)) \
         or text.lower() in {"ok", "yes", "no", "thanks", "thx", "vâng", "ừ", "ừm", "uh", "dạ", "được", "hihi", "haha"}
 
-# ======= COMMAND HANDLERS =======
+def detect_lang(text):
+    han_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    if han_count >= 2:
+        return "zh"
+    return "vi"
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_group(update): return
     user = update.effective_user
@@ -156,17 +157,14 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ======= HANDLE GROUP MESSAGES =======
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if chat.id not in allowed_groups:
-        return  # Group chưa bật bot
+        return
     msg = update.message
     text = msg.text or ""
     user = update.effective_user
 
-    # ===== PHÂN QUYỀN TỪNG LỆNH =====
-    # ==== LỆNH STOP AUTO ====
     if text.strip().lower().startswith("stop//"):
         if not is_admin(user.id, user.username):
             await msg.reply_text("🚫 Bạn không có quyền dùng auto dịch\n🚫 您没有权限使用自动翻译", reply_to_message_id=msg.message_id)
@@ -182,7 +180,6 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await msg.reply_text("🛑 Đã tắt chế độ auto hỏi đáp!\n🛑 已关闭自动对话模式", reply_to_message_id=msg.message_id)
         return
 
-    # ==== LỆNH AUTO MODE ====
     if text.strip().startswith("//"):
         if not is_admin(user.id, user.username):
             await msg.reply_text("🚫 Bạn không có quyền bật auto dịch\n🚫 您没有权限开启自动翻译", reply_to_message_id=msg.message_id)
@@ -198,8 +195,6 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await msg.reply_text("✅ Đã bật chế độ auto hỏi đáp!\n✅ 已开启自动对话模式", reply_to_message_id=msg.message_id)
         return
 
-    # ==== XỬ LÝ TIN NHẮN THEO LỆNH ĐẦU DÒNG ====
-    # Dịch 1 lần
     if text.strip().startswith("/"):
         content = text.strip()[1:].strip()
         if not content or is_trivial(content):
@@ -207,7 +202,6 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await translate_and_reply(update, context, content)
         return
 
-    # Hỏi đáp GPT 1 lần
     if text.strip().startswith("@"):
         content = text.strip()[1:].strip()
         if not content or is_trivial(content):
@@ -215,34 +209,28 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await chat_gpt_and_reply(update, context, content)
         return
 
-    # ==== XỬ LÝ THEO AUTO MODE ====
-    # AUTO DỊCH
     if get_auto_mode(chat.id, "auto_translate"):
         if is_trivial(text):
             return
         await translate_and_reply(update, context, text)
         return
-    # AUTO HỎI ĐÁP
     if get_auto_mode(chat.id, "auto_chat"):
         if is_trivial(text):
             return
         await chat_gpt_and_reply(update, context, text)
         return
 
-    # Nếu không thuộc bất cứ trường hợp nào trên -> bot im lặng
     return
 
-# ======= PRIVATE CHAT – ADMIN THÊM/XÓA MOD =======
 async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg: Message = update.message
     user = update.effective_user
     username = (user.username or "").lstrip('@')
     if not is_admin(user.id, user.username):
-        return  # Người thường chat riêng bot sẽ im lặng tuyệt đối
+        return
 
     text = (msg.text or "").strip()
     if not text: return
-    # Thêm mod
     match_add = re.match(r"^\+\s*@?(\w+)", text)
     if match_add:
         modname = match_add.group(1)
@@ -257,7 +245,6 @@ async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_json("mods.json", list(mods))
         await msg.reply_text(f"✅ Đã thêm @{modname} làm mod!\n✅ 已添加 @{modname} 成为MOD！")
         return
-    # Xóa mod
     match_remove = re.match(r"^-\s*@?(\w+)", text)
     if match_remove:
         modname = match_remove.group(1)
@@ -269,20 +256,23 @@ async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_json("mods.json", list(mods))
         await msg.reply_text(f"✅ Đã xoá @{modname} khỏi mod!\n✅ 已从MOD列表移除 @{modname}！")
         return
-    # Liệt kê mod
     if text.lower() in {"mod", "mods", "danhsachmod", "dsmod"}:
         modlist = "\n".join(f"@{m}" for m in mods) or "Không có MOD nào.\n暂无MOD。"
         await msg.reply_text(f"Danh sách mod hiện tại:\n{modlist}\n\n当前MOD列表：\n{modlist}")
         return
 
-# ======= REPLY LOGIC =======
 async def translate_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, content):
     chat_id = update.effective_chat.id
     history = get_group_history(chat_id)
-    # Giữ lịch sử ngữ cảnh
+    lang = detect_lang(content)
+    if lang == "vi":
+        prompt = f"Dịch câu sau sang tiếng Trung giản thể, chỉ trả về bản dịch, không giải thích, không ghi chú gì khác:\n{content}"
+    else:
+        prompt = f"将下面这句话翻译成越南语，只需给出译文，不要解释、不要任何附注：\n{content}"
+
     messages = history[-6:] + [
-        {"role": "system", "content": "Translate this into natural Chinese or Vietnamese, based on input."},
-        {"role": "user", "content": content}
+        {"role": "system", "content": "Bạn là một dịch giả Trung-Việt song ngữ. Luôn luôn chỉ dịch nghĩa, không giải thích, không được dùng tiếng Anh, không trả lời lan man."},
+        {"role": "user", "content": prompt}
     ]
     try:
         response = openai.ChatCompletion.create(model=MODEL, messages=messages)
@@ -306,16 +296,13 @@ async def chat_gpt_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
     append_history(chat_id, "user", content)
     append_history(chat_id, "assistant", reply)
 
-# ======= MAIN =========
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("out", out))
     app.add_handler(CommandHandler("menu", menu))
-    # Group chat
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_group_message))
-    # Private chat chỉ cho admin gốc
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_private))
     app.run_polling()
 
