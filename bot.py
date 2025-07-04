@@ -1,3 +1,7 @@
+import os
+import json
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text
     user_id = update.effective_user.id
@@ -37,3 +41,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_input.startswith("/"):
         append_history(user_id, "user", user_input)
         append_history(user_id, "assistant", reply)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Tôi đây（在的）.")
+    def main():
+    load_memory()
+
+    app = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.COMMAND, handle_message))
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
