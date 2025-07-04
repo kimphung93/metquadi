@@ -33,12 +33,23 @@ def append_history(user_id, role, content):
     save_memory()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Chào bạn! Tôi là bot ChatGPT hỗ trợ dịch ngữ cảnh. Gõ gì đó hoặc dùng / để dịch.")
+    await update.message.reply_text("Tôi đây (在的）.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text
     user_id = update.effective_user.id
 
+    # Nếu người dùng gõ /menu
+    if user_input.strip() == "/menu":
+        await update.message.reply_text("""
+📋 DANH SÁCH LỆNH – 指令列表
+/start – Bắt đầu sử dụng bot – 启动机器人
+/stop – Dừng bot – 停止机器人
+/menu – Hiển thị menu chức năng – 显示功能菜单
+/translate – Dịch văn bản (Việt - Trung) – 翻译文本（越南语 - 中文）
+/reset – Xoá toàn bộ trí nhớ hội thoại – 清除所有对话记忆
+""")
+    return
     # Nếu là lệnh dịch (bắt đầu bằng /)
     if user_input.startswith("/"):
         text_to_translate = user_input[1:]
