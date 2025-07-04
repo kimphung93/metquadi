@@ -1,134 +1,256 @@
 import openai
 import os
 import json
+import re
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# === Thiết lập thông số & biến môi trường ===
+# ======= THIẾT LẬP ===========
 openai.api_key = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 MODEL = "gpt-3.5-turbo"
 
-user_histories = {}
+# ======= QUẢN LÝ FILE =========
+def load_json(filename, default):
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
 
-# === Quản lý bộ nhớ hội thoại ===
-def load_memory():
-    global user_histories
-    if os.path.exists("memory.json"):
-        with open("memory.json", "r", encoding="utf-8") as f:
-            user_histories = json.load(f)
-    else:
-        user_histories = {}
+def save_json(filename, data):
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-def save_memory():
-    with open("memory.json", "w", encoding="utf-8") as f:
-        json.dump(user_histories, f, ensure_ascii=False, indent=2)
+# ======= KHỞI TẠO =========
+user_histories = load_json("memory.json", {})
+auto_mode = load_json("auto_mode.json", {})        # {group_id: {"auto_translate": True/False, ...}}
+allowed_groups = set(load_json("active_groups.json", []))   # group_id đã bật bot
+mods = set(str(i) for i in load_json("mods.json", []))      # user_id có quyền mod
 
-def get_user_history(user_id):
-    return user_histories.get(str(user_id), [])
+def save_all():
+    save_json("memory.json", user_histories)
+    save_json("auto_mode.json", auto_mode)
+    save_json("active_groups.json", list(allowed_groups))
+    save_json("mods.json", list(mods))
 
-def append_history(user_id, role, content):
-    uid = str(user_id)
-    if uid not in user_histories:
-        user_histories[uid] = []
-    user_histories[uid].append({"role": role, "content": content})
-    save_memory()
+# ======= HÀM TIỆN ÍCH =========
+def is_group(update: Update):
+    return update.effective_chat and update.effective_chat.type in ["group", "supergroup"]
 
-def reset_history(user_id):
-    uid = str(user_id)
-    if uid in user_histories:
-        user_histories[uid] = []
-        save_memory()
+def is_admin_or_mod(user_id):
+    return str(user_id) in mods
 
-# === Các lệnh handler ===
+def get_group_history(chat_id):
+    return user_histories.get(str(chat_id), [])
 
+def append_history(chat_id, role, content):
+    cid = str(chat_id)
+    if cid not in user_histories:
+        user_histories[cid] = []
+    user_histories[cid].append({"role": role, "content": content})
+    save_json("memory.json", user_histories)
+
+def reset_history(chat_id):
+    cid = str(chat_id)
+    if cid in user_histories:
+        user_histories[cid] = []
+        save_json("memory.json", user_histories)
+
+def set_auto_mode(chat_id, mode, value):
+    cid = str(chat_id)
+    if cid not in auto_mode:
+        auto_mode[cid] = {}
+    auto_mode[cid][mode] = value
+    save_json("auto_mode.json", auto_mode)
+
+def get_auto_mode(chat_id, mode):
+    cid = str(chat_id)
+    return auto_mode.get(cid, {}).get(mode, False)
+
+def is_trivial(text):
+    """Kiểm tra tin nhắn chỉ là emoji, ký hiệu, hoặc ai cũng hiểu, không cần dịch."""
+    text = text.strip()
+    if not text: return True
+    # Toàn ký hiệu hoặc emoji hoặc các từ phổ thông
+    return bool(re.fullmatch(r"[ .!?,:;…/\\\\|()\\[\\]\"'@#%^&*0-9\\-_=+~`♥️❤️👍😂😁🤔🥲😭🙂😉😅😆😇👀🌹💯⭐️🔥🙏🍀🍻🍺🍵☕️]*", text)) \
+        or text.lower() in {"ok", "yes", "no", "thanks", "thx", "vâng", "ừ", "ừm", "uh", "dạ", "được", "hihi", "haha"}
+
+# ======= COMMAND HANDLERS =======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        "🤖 Xin chào! Tôi là bot hỗ trợ tiếng Việt & 中文.\n"
-        "📖 Hãy gửi tin nhắn hoặc sử dụng /menu để xem chức năng.\n"
-        "——\n"
-        "🤖 你好！我是支持越南语和中文的机器人。\n"
-        "📖 发送消息或输入 /menu 查看功能。"
-    )
-    await update.message.reply_text(msg)
+    if not is_group(update): return
+    user = update.effective_user.id
+    if not is_admin_or_mod(user):
+        await update.message.reply_text("🚫 Bạn không có quyền sử dụng lệnh này\n🚫 您没有权限使用此指令")
+        return
+    allowed_groups.add(update.effective_chat.id)
+    save_all()
+    await update.message.reply_text("✅ Bot đã được bật tại nhóm này\n✅ 本群已启用机器人")
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_group(update): return
+    user = update.effective_user.id
+    if not is_admin_or_mod(user):
+        await update.message.reply_text("🚫 Bạn không có quyền sử dụng lệnh này\n🚫 您没有权限使用此指令")
+        return
+    allowed_groups.discard(update.effective_chat.id)
+    save_all()
+    await update.message.reply_text("🛑 Bot đã dừng tại nhóm này\n🛑 本群已禁用机器人")
+
+async def out(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_group(update): return
+    user = update.effective_user.id
+    if not is_admin_or_mod(user):
+        await update.message.reply_text("🚫 Bạn không có quyền sử dụng lệnh này\n🚫 您没有权限使用此指令")
+        return
+    await update.message.reply_text("👋 Tạm biệt\n👋 再见")
+    await context.bot.leave_chat(update.effective_chat.id)
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "📋 **DANH SÁCH LỆNH** – 指令列表\n"
-        "/start - Bắt đầu sử dụng bot – 启动机器人\n"
-        "/menu - Hiển thị menu chức năng – 显示功能菜单\n"
-        "/translate <văn bản> - Dịch Việt/Trung – 翻译文本（越南语/中文）\n"
-        "/reset - Xóa trí nhớ hội thoại – 清除对话记忆\n"
-        "\nChỉ cần gửi câu hỏi, tôi sẽ trả lời tự động bằng AI!\n"
-        "——\n"
-        "直接发送问题，我会用AI自动回复！"
+    "📋 **HƯỚNG DẪN SỬ DỤNG BOT** – 机器人使用说明\n\n"
+    "/start – Bật bot tại nhóm này – 启用机器人\n"
+    "/stop – Tắt bot tại nhóm này – 禁用机器人\n"
+    "/out – Bot rời nhóm – 机器人退出群\n"
+    "/menu – Hiển thị menu lệnh – 显示功能菜单\n"
+    "\n"
+    "▶️ **Ký hiệu điều khiển:**\n"
+    "`/` – Dịch 1 lần – 翻译一次\n"
+    "`//` – Tự động dịch – 自动翻译\n"
+    "`stop//` – Dừng tự động dịch – 停止自动翻译\n"
+    "`@` – Trò chuyện GPT – 与机器人对话\n"
+    "`@@` – Tự động hỏi đáp – 自动对话\n"
+    "`stop@@` – Dừng auto hỏi đáp – 停止自动对话\n"
+    "\n"
+    "**Ví dụ | 例子:**\n"
+    "/ 你好！   (dịch câu này)\n"
+    "//         (bật auto dịch)\n"
+    "stop//     (tắt auto dịch)\n"
+    "@ Lịch sử Việt Nam là gì?\n"
+    "@@        (bật auto hỏi đáp)\n"
+    "stop@@    (tắt auto hỏi đáp)\n"
+    "\n"
+    "- Chỉ admin/mod mới bật/tắt bot trong nhóm\n"
+    "- Mỗi nhóm hoạt động độc lập\n"
+    "- Bot KHÔNG trả lời trong chat riêng\n"
+    "- Tin nhắn toàn emoji, ký hiệu, 'ok', ... sẽ bị bỏ qua không dịch!\n"
+    "- Khi dịch, bot chỉ reply bản dịch ngay dưới tin nhắn gốc, không lặp lại văn bản gốc.\n"
+    "- Đầy đủ hướng dẫn ở /menu.\n"
+    "——\n"
+    "- 只有群管理/版主可以启动/禁用机器人\n"
+    "- 每个群独立运作\n"
+    "- 机器人不在私聊回复\n"
+    "- 全部是表情、符号、“ok”类消息将被自动忽略\n"
+    "- 翻译时仅回复译文，不重复原文\n"
+    "- 更多说明请看 /menu"
     )
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
-async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    reset_history(update.effective_user.id)
-    msg = "✅ Đã xóa toàn bộ lịch sử hội thoại!\n✅ 已清除所有对话记录！"
-    await update.message.reply_text(msg)
+# ======= HANDLE MESSAGES =======
+async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.id not in allowed_groups:
+        return  # Group chưa bật bot
+    msg = update.message
+    text = msg.text or ""
+    user_id = update.effective_user.id
+    chat_id = chat.id
 
-async def translate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❗ Vui lòng nhập nội dung cần dịch sau lệnh /translate\n"
-            "❗ 请在 /translate 后输入需要翻译的内容"
-        )
+    # ==== LỆNH STOP AUTO ====
+    if text.strip().lower().startswith("stop//"):
+        set_auto_mode(chat_id, "auto_translate", False)
+        await msg.reply_text("🛑 Đã tắt chế độ tự động dịch!\n🛑 已关闭自动翻译模式")
         return
-    text_to_translate = " ".join(args)
-    messages = [
-        {"role": "system", "content": "Translate this into natural Chinese or Vietnamese, based on input:"},
-        {"role": "user", "content": text_to_translate}
+    if text.strip().lower().startswith("stop@@"):
+        set_auto_mode(chat_id, "auto_chat", False)
+        await msg.reply_text("🛑 Đã tắt chế độ auto hỏi đáp!\n🛑 已关闭自动对话模式")
+        return
+
+    # ==== LỆNH AUTO MODE ====
+    if text.strip().startswith("//"):
+        set_auto_mode(chat_id, "auto_translate", True)
+        await msg.reply_text("✅ Đã bật chế độ tự động dịch!\n✅ 已开启自动翻译模式")
+        return
+    if text.strip().startswith("@@"):
+        set_auto_mode(chat_id, "auto_chat", True)
+        await msg.reply_text("✅ Đã bật chế độ auto hỏi đáp!\n✅ 已开启自动对话模式")
+        return
+
+    # ==== XỬ LÝ TIN NHẮN THEO LỆNH ĐẦU DÒNG ====
+    # Dịch 1 lần
+    if text.strip().startswith("/"):
+        content = text.strip()[1:].strip()
+        if not content or is_trivial(content):
+            return
+        await translate_and_reply(update, context, content)
+        return
+
+    # Hỏi đáp GPT 1 lần
+    if text.strip().startswith("@"):
+        content = text.strip()[1:].strip()
+        if not content or is_trivial(content):
+            return
+        await chat_gpt_and_reply(update, context, content)
+        return
+
+    # ==== XỬ LÝ THEO AUTO MODE ====
+    # AUTO DỊCH
+    if get_auto_mode(chat_id, "auto_translate"):
+        if is_trivial(text):
+            return
+        await translate_and_reply(update, context, text)
+        return
+    # AUTO HỎI ĐÁP
+    if get_auto_mode(chat_id, "auto_chat"):
+        if is_trivial(text):
+            return
+        await chat_gpt_and_reply(update, context, text)
+        return
+
+    # Nếu không thuộc bất cứ trường hợp nào trên -> bot im lặng
+    return
+
+# ======= REPLY LOGIC =======
+async def translate_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, content):
+    chat_id = update.effective_chat.id
+    history = get_group_history(chat_id)
+    # Giữ lịch sử ngữ cảnh
+    messages = history[-6:] + [
+        {"role": "system", "content": "Translate this into natural Chinese or Vietnamese, based on input."},
+        {"role": "user", "content": content}
     ]
     try:
         response = openai.ChatCompletion.create(model=MODEL, messages=messages)
         reply = response.choices[0].message.content.strip()
     except Exception as e:
         reply = f"Lỗi khi gọi OpenAI: {e}\n调用 OpenAI 时出错：{e}"
-    await update.message.reply_text(reply)
+    await update.message.reply_text(reply, reply_to_message_id=update.message.message_id)
+    append_history(chat_id, "user", content)
+    append_history(chat_id, "assistant", reply)
 
-# === Xử lý tin nhắn thường ===
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_input = update.message.text
-    user_id = update.effective_user.id
-
-    # Nếu là lệnh không hợp lệ
-    if user_input.startswith("/") and not user_input.startswith("/translate"):
-        await update.message.reply_text(
-            "❗ Lệnh không hợp lệ hoặc chưa hỗ trợ.\n"
-            "❗ 指令无效或尚未支持。"
-        )
-        return
-
-    # Lấy lịch sử, gửi tới OpenAI
-    messages = get_user_history(user_id) + [{"role": "user", "content": user_input}]
+async def chat_gpt_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, content):
+    chat_id = update.effective_chat.id
+    history = get_group_history(chat_id)
+    messages = history[-8:] + [{"role": "user", "content": content}]
     try:
         response = openai.ChatCompletion.create(model=MODEL, messages=messages)
         reply = response.choices[0].message.content.strip()
     except Exception as e:
         reply = f"Lỗi khi gọi OpenAI: {e}\n调用 OpenAI 时出错：{e}"
+    await update.message.reply_text(reply, reply_to_message_id=update.message.message_id)
+    append_history(chat_id, "user", content)
+    append_history(chat_id, "assistant", reply)
 
-    await update.message.reply_text(reply)
-    append_history(user_id, "user", user_input)
-    append_history(user_id, "assistant", reply)
-
-# === Khởi động bot ===
+# ======= MAIN =========
 def main():
-    load_memory()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("out", out))
     app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CommandHandler("translate", translate))
-    # Tin nhắn thường (không phải lệnh)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # Lệnh không hợp lệ vẫn đi qua handle_message
-    app.add_handler(MessageHandler(filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_group_message))
     app.run_polling()
 
 if __name__ == "__main__":
