@@ -1,3 +1,4 @@
+import openai
 import os
 import json
 from telegram import Update
