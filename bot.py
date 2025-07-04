@@ -266,13 +266,12 @@ async def translate_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE
     history = get_group_history(chat_id)
     lang = detect_lang(content)
     if lang == "vi":
-        prompt = f"Dịch câu sau sang tiếng Trung giản thể, chỉ trả về bản dịch, không giải thích, không ghi chú gì khác:\n{content}"
+        prompt = "Chỉ dịch sang tiếng Trung giản thể. Tuyệt đối KHÔNG lặp lại văn bản gốc, không chú thích, không giải thích."
     else:
-        prompt = f"将下面这句话翻译成越南语，只需给出译文，不要解释、不要任何附注：\n{content}"
-
+        prompt = "Chỉ dịch sang tiếng Việt. Tuyệt đối KHÔNG lặp lại văn bản gốc, không chú thích, không giải thích."
     messages = history[-6:] + [
-        {"role": "system", "content": "Bạn là một dịch giả Trung-Việt song ngữ. Luôn luôn chỉ dịch nghĩa, không giải thích, không được dùng tiếng Anh, không trả lời lan man."},
-        {"role": "user", "content": prompt}
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": content}
     ]
     try:
         response = openai.ChatCompletion.create(model=MODEL, messages=messages)
