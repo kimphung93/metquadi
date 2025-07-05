@@ -2,16 +2,29 @@ import openai
 import os
 import json
 import re
-from telegram import Update, Message
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
 )
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# ================== CONFIG ===============
+openai.api_key = os.getenv("OPENAI_API_KEY", "sk-xxxxxx")   # Đổi key nếu cần
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "123:xxx") # Đổi token nếu cần
 MODEL = "gpt-3.5-turbo"
-ADMIN_ID = 6902075720  # Sửa nếu bạn đổi admin
+ADMIN_ID = 6902075720
 ADMIN_USERNAME = "sunshine168888"
+
+# ---- Thông tin thanh toán
+USDT_ADDR = "TNBGvQAfFn5Ais4acNss4Y4XAkQBa26hfG"
+HUIONE_QR_PATH = "13bf0fbf-33de-4a7d-97b8-559f1af109f0.png"
+USDT_QR_PATH = "de39a519-30b0-4346-acba-aa24f8fc6be5.png"
+GIA_NGAY = "5$"
+GIA_TUAN = "15$"
+GIA_THANG = "35$"
+FORWARD_PRIVATE_PAYMENT = True  # True: forward hóa đơn về admin inbox
+MAX_SPAM = 3  # Số lần spam trước khi cảnh báo
+
+# =========================================
 
 def load_json(filename, default):
     try:
@@ -28,12 +41,16 @@ user_histories = load_json("memory.json", {})
 auto_mode = load_json("auto_mode.json", {})
 allowed_groups = set(load_json("active_groups.json", []))
 mods = set(load_json("mods.json", []))
+paid_groups = load_json("paid_groups.json", {})
+spam_tracker = load_json("spam_tracker.json", {})  # {str(user_id): count}
 
 def save_all():
     save_json("memory.json", user_histories)
     save_json("auto_mode.json", auto_mode)
     save_json("active_groups.json", list(allowed_groups))
     save_json("mods.json", list(mods))
+    save_json("paid_groups.json", paid_groups)
+    save_json("spam_tracker.json", spam_tracker)
 
 def is_group(update: Update):
     return update.effective_chat and update.effective_chat.type in ["group", "supergroup"]
@@ -87,6 +104,142 @@ def detect_lang(text):
     if han_count >= 2:
         return "zh"
     return "vi"
+
+def group_has_paid(chat_id):
+    gid = str(chat_id)
+    info = paid_groups.get(gid)
+    if not info: return False
+    from datetime import datetime
+    try:
+        expire = info.get("expire")
+        if not expire: return False
+        dt_expire = datetime.strptime(expire, "%Y-%m-%d")
+        return dt_expire.date() >= datetime.now().date()
+    except Exception:
+        return False
+
+def build_license_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Đăng ký bản quyền", callback_data="reg_license")],
+        [InlineKeyboardButton("Tôi chưa có nhu cầu", callback_data="no_need")]
+    ])
+
+def build_package_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"Gói ngày ({GIA_NGAY})", callback_data="pkg_ngay")],
+        [InlineKeyboardButton(f"Gói tuần ({GIA_TUAN})", callback_data="pkg_tuan")],
+        [InlineKeyboardButton(f"Gói tháng ({GIA_THANG})", callback_data="pkg_thang")],
+    ])
+
+async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg: Message = update.message
+    user = update.effective_user
+    username = (user.username or "").lstrip('@')
+    if is_admin(user.id, user.username):
+        # Xử lý lệnh mod như cũ
+        text = (msg.text or "").strip()
+        if not text: return
+        match_add = re.match(r"^\+\s*@?(\w+)", text)
+        if match_add:
+            modname = match_add.group(1)
+            modname = modname.lstrip('@')
+            if modname.lower() == ADMIN_USERNAME.lower():
+                await msg.reply_text(f"❌ Không thể thêm admin làm mod!\n❌ 不能把管理员加入MOD列表！")
+                return
+            if modname.lower() in {u.lower().lstrip('@') for u in mods}:
+                await msg.reply_text(f"⚠️ @{modname} đã là mod!\n⚠️ @{modname} 已经是MOD了！")
+                return
+            mods.add(modname)
+            save_json("mods.json", list(mods))
+            await msg.reply_text(f"✅ Đã thêm @{modname} làm mod!\n✅ 已添加 @{modname} 成为MOD！")
+            return
+        match_remove = re.match(r"^-\s*@?(\w+)", text)
+        if match_remove:
+            modname = match_remove.group(1)
+            modname = modname.lstrip('@')
+            if modname.lower() not in {u.lower().lstrip('@') for u in mods}:
+                await msg.reply_text(f"⚠️ @{modname} không phải mod!\n⚠️ @{modname} 不是MOD！")
+                return
+            mods.discard(modname)
+            save_json("mods.json", list(mods))
+            await msg.reply_text(f"✅ Đã xoá @{modname} khỏi mod!\n✅ 已从MOD列表移除 @{modname}！")
+            return
+        if text.lower() in {"mod", "mods", "danhsachmod", "dsmod"}:
+            modlist = "\n".join(f"@{m}" for m in mods) or "Không có MOD nào.\n暂无MOD。"
+            await msg.reply_text(f"Danh sách mod hiện tại:\n{modlist}\n\n当前MOD列表：\n{modlist}")
+            return
+    else:
+        # Hiện menu đăng ký bản quyền cho user thường
+        await msg.reply_text(
+            "🔒 Đăng ký bản quyền sử dụng bot để mở khoá toàn bộ chức năng!\n\n"
+            "Nhấn vào nút bên dưới để đăng ký:",
+            reply_markup=build_license_keyboard()
+        )
+
+async def handle_license_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+    if data == "reg_license":
+        await query.message.reply_text(
+            "Vui lòng chọn gói dịch vụ bạn muốn đăng ký:",
+            reply_markup=build_package_keyboard()
+        )
+    elif data == "pkg_ngay":
+        await send_payment_info(query, "ngày", GIA_NGAY, context)
+    elif data == "pkg_tuan":
+        await send_payment_info(query, "tuần", GIA_TUAN, context)
+    elif data == "pkg_thang":
+        await send_payment_info(query, "tháng", GIA_THANG, context)
+    elif data == "no_need":
+        await query.message.reply_text("Cảm ơn bạn đã quan tâm! Khi nào cần có thể vào /menu để đăng ký bất cứ lúc nào.")
+
+async def send_payment_info(query, goi, gia, context):
+    text = (
+        f"**Đăng ký gói {goi}**\n"
+        f"- Giá: {gia}\n\n"
+        f"Vui lòng gửi các thông tin sau cho bot này:\n"
+        f"1. Username Telegram: (ví dụ @tenban)\n"
+        f"2. ID Telegram: lấy tại @EskoIDBot\n"
+        f"3. Gửi ảnh hóa đơn chuyển khoản (USDT hoặc Huione)\n\n"
+        f"**Thông tin chuyển khoản:**\n"
+        f"- USDT (TRC20): `{USDT_ADDR}`\n"
+        f"- Hoặc dùng mã QR bên dưới\n\n"
+        f"**Lưu ý:**\n"
+        f"- Chuyển đúng số tiền, không hoàn tiền nếu chuyển dư\n"
+        f"- Không ghi nội dung khi chuyển khoản\n"
+    )
+    await query.message.reply_text(text, parse_mode="Markdown")
+    # Gửi QR code
+    try:
+        with open(HUIONE_QR_PATH, "rb") as f:
+            await query.message.reply_photo(photo=f, caption="QR Huione Pay")
+    except Exception:
+        await query.message.reply_text("Không gửi được ảnh QR Huione. Liên hệ admin để nhận mã QR.")
+    try:
+        with open(USDT_QR_PATH, "rb") as f:
+            await query.message.reply_photo(photo=f, caption="QR USDT TRC20")
+    except Exception:
+        await query.message.reply_text("Không gửi được ảnh QR USDT. Liên hệ admin để nhận mã QR.")
+
+async def handle_payment_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Khi user gửi ảnh hóa đơn (screenshot) ở chat riêng
+    message = update.message
+    user = message.from_user
+    caption = f"KH đăng ký bản quyền:\nUsername: @{user.username}\nID: {user.id}\n"
+    if message.caption:
+        caption += f"Thông tin bổ sung: {message.caption}\n"
+    caption += "Ảnh hóa đơn chuyển khoản bên dưới."
+    if FORWARD_PRIVATE_PAYMENT:
+        await context.bot.send_photo(chat_id=ADMIN_ID, photo=message.photo[-1].file_id, caption=caption)
+    await message.reply_text("Đang xác nhận, vui lòng chờ admin kiểm tra!")
+
+def anyone_is_mod_admin(members):
+    """members là list dict chứa user_id, username, status"""
+    for m in members:
+        if is_mod(m.get("user_id"), m.get("username")):
+            return True
+    return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_group(update): return
@@ -153,157 +306,39 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     "- 机器人不在私聊回复（除非管理员管理MOD）\n"
     "- 全部是表情、符号、“ok”类消息将被自动忽略\n"
     "- 翻译时仅回复译文，不重复原文\n"
-    "- 更多说明请看 /menu"
+    "- 更多说明请看 /menu",
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+    # Thêm menu đăng ký bản quyền cho thành viên thường
+    if is_private(update):
+        await update.message.reply_text(
+            "🔒 Đăng ký bản quyền sử dụng bot để mở khoá toàn bộ chức năng!\n\n"
+            "Nhấn vào nút bên dưới để đăng ký:",
+            reply_markup=build_license_keyboard()
+        )
 
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
-    if chat.id not in allowed_groups:
-        return
+    chat_id = chat.id
     msg = update.message
+    user = update.effective_user
+    is_paid = group_has_paid(chat_id)
+    is_allowed = chat_id in allowed_groups
+    has_mod = is_mod(user.id, user.username)
+    if not (is_allowed or is_paid):
+        # Kiểm tra số lần spam của user
+        u_id = str(user.id)
+        cnt = spam_tracker.get(u_id, 0) + 1
+        spam_tracker[u_id] = cnt
+        if cnt == MAX_SPAM:
+            await msg.reply_text("Hiện bot chưa thể hỗ trợ bạn, vui lòng liên hệ @fanyi_aallive_bot", reply_to_message_id=msg.message_id)
+        save_json("spam_tracker.json", spam_tracker)
+        return
+    # Đúng quyền rồi thì reset spam count
+    if str(user.id) in spam_tracker:
+        spam_tracker[str(user.id)] = 0
+        save_json("spam_tracker.json", spam_tracker)
     text = msg.text or ""
-    user = update.effective_user
 
-    if text.strip().lower().startswith("stop//"):
-        if not is_admin(user.id, user.username):
-            await msg.reply_text("🚫 Bạn không có quyền dùng auto dịch\n🚫 您没有权限使用自动翻译", reply_to_message_id=msg.message_id)
-            return
-        set_auto_mode(chat.id, "auto_translate", False)
-        await msg.reply_text("🛑 Đã tắt chế độ tự động dịch!\n🛑 已关闭自动翻译模式", reply_to_message_id=msg.message_id)
-        return
-    if text.strip().lower().startswith("stop@@"):
-        if not is_admin(user.id, user.username):
-            await msg.reply_text("🚫 Bạn không có quyền dùng auto hỏi đáp\n🚫 您没有权限使用自动对话", reply_to_message_id=msg.message_id)
-            return
-        set_auto_mode(chat.id, "auto_chat", False)
-        await msg.reply_text("🛑 Đã tắt chế độ auto hỏi đáp!\n🛑 已关闭自动对话模式", reply_to_message_id=msg.message_id)
-        return
-
-    if text.strip().startswith("//"):
-        if not is_admin(user.id, user.username):
-            await msg.reply_text("🚫 Bạn không có quyền bật auto dịch\n🚫 您没有权限开启自动翻译", reply_to_message_id=msg.message_id)
-            return
-        set_auto_mode(chat.id, "auto_translate", True)
-        await msg.reply_text("✅ Đã bật chế độ tự động dịch!\n✅ 已开启自动翻译模式", reply_to_message_id=msg.message_id)
-        return
-    if text.strip().startswith("@@"):
-        if not is_admin(user.id, user.username):
-            await msg.reply_text("🚫 Bạn không có quyền bật auto hỏi đáp\n🚫 您没有权限开启自动对话", reply_to_message_id=msg.message_id)
-            return
-        set_auto_mode(chat.id, "auto_chat", True)
-        await msg.reply_text("✅ Đã bật chế độ auto hỏi đáp!\n✅ 已开启自动对话模式", reply_to_message_id=msg.message_id)
-        return
-
-    if text.strip().startswith("/"):
-        content = text.strip()[1:].strip()
-        if not content or is_trivial(content):
-            return
-        await translate_and_reply(update, context, content)
-        return
-
-    if text.strip().startswith("@"):
-        content = text.strip()[1:].strip()
-        if not content or is_trivial(content):
-            return
-        await chat_gpt_and_reply(update, context, content)
-        return
-
-    if get_auto_mode(chat.id, "auto_translate"):
-        if is_trivial(text):
-            return
-        await translate_and_reply(update, context, text)
-        return
-    if get_auto_mode(chat.id, "auto_chat"):
-        if is_trivial(text):
-            return
-        await chat_gpt_and_reply(update, context, text)
-        return
-
-    return
-
-async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg: Message = update.message
-    user = update.effective_user
-    username = (user.username or "").lstrip('@')
-    if not is_admin(user.id, user.username):
-        return
-
-    text = (msg.text or "").strip()
-    if not text: return
-    match_add = re.match(r"^\+\s*@?(\w+)", text)
-    if match_add:
-        modname = match_add.group(1)
-        modname = modname.lstrip('@')
-        if modname.lower() == ADMIN_USERNAME.lower():
-            await msg.reply_text(f"❌ Không thể thêm admin làm mod!\n❌ 不能把管理员加入MOD列表！")
-            return
-        if modname.lower() in {u.lower().lstrip('@') for u in mods}:
-            await msg.reply_text(f"⚠️ @{modname} đã là mod!\n⚠️ @{modname} 已经是MOD了！")
-            return
-        mods.add(modname)
-        save_json("mods.json", list(mods))
-        await msg.reply_text(f"✅ Đã thêm @{modname} làm mod!\n✅ 已添加 @{modname} 成为MOD！")
-        return
-    match_remove = re.match(r"^-\s*@?(\w+)", text)
-    if match_remove:
-        modname = match_remove.group(1)
-        modname = modname.lstrip('@')
-        if modname.lower() not in {u.lower().lstrip('@') for u in mods}:
-            await msg.reply_text(f"⚠️ @{modname} không phải mod!\n⚠️ @{modname} 不是MOD！")
-            return
-        mods.discard(modname)
-        save_json("mods.json", list(mods))
-        await msg.reply_text(f"✅ Đã xoá @{modname} khỏi mod!\n✅ 已从MOD列表移除 @{modname}！")
-        return
-    if text.lower() in {"mod", "mods", "danhsachmod", "dsmod"}:
-        modlist = "\n".join(f"@{m}" for m in mods) or "Không có MOD nào.\n暂无MOD。"
-        await msg.reply_text(f"Danh sách mod hiện tại:\n{modlist}\n\n当前MOD列表：\n{modlist}")
-        return
-
-async def translate_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, content):
-    chat_id = update.effective_chat.id
-    history = get_group_history(chat_id)
-    lang = detect_lang(content)
-    if lang == "vi":
-        prompt = "Chỉ dịch sang tiếng Trung giản thể. Tuyệt đối KHÔNG lặp lại văn bản gốc, không chú thích, không giải thích."
-    else:
-        prompt = "Chỉ dịch sang tiếng Việt. Tuyệt đối KHÔNG lặp lại văn bản gốc, không chú thích, không giải thích."
-    messages = history[-6:] + [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": content}
-    ]
-    try:
-        response = openai.ChatCompletion.create(model=MODEL, messages=messages)
-        reply = response.choices[0].message.content.strip()
-    except Exception as e:
-        reply = f"Lỗi khi gọi OpenAI: {e}\n调用 OpenAI 时出错：{e}"
-    await update.message.reply_text(reply, reply_to_message_id=update.message.message_id)
-    append_history(chat_id, "user", content)
-    append_history(chat_id, "assistant", reply)
-
-async def chat_gpt_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, content):
-    chat_id = update.effective_chat.id
-    history = get_group_history(chat_id)
-    messages = history[-8:] + [{"role": "user", "content": content}]
-    try:
-        response = openai.ChatCompletion.create(model=MODEL, messages=messages)
-        reply = response.choices[0].message.content.strip()
-    except Exception as e:
-        reply = f"Lỗi khi gọi OpenAI: {e}\n调用 OpenAI 时出错：{e}"
-    await update.message.reply_text(reply, reply_to_message_id=update.message.message_id)
-    append_history(chat_id, "user", content)
-    append_history(chat_id, "assistant", reply)
-
-def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
-    app.add_handler(CommandHandler("out", out))
-    app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_group_message))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_private))
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    # Admin/mod hoặc nhóm trả phí mới dùng auto
+    if
