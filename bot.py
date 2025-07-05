@@ -140,13 +140,13 @@ async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (msg.text or "").strip()
         if not text: return
         match_add = re.match(r"^\+\s*@?(\w+)", text)
-        if match_add:
+    if match_add:
             modname = match_add.group(1)
             modname = modname.lstrip('@')
-            if modname.lower() == ADMIN_USERNAME.lower():
+    if modname.lower() == ADMIN_USERNAME.lower():
                 await msg.reply_text(f"❌ Không thể thêm admin làm mod!\n❌ 不能把管理员加入MOD列表！")
                 return
-            if modname.lower() in {u.lower().lstrip('@') for u in mods}:
+    if modname.lower() in {u.lower().lstrip('@') for u in mods}:
                 await msg.reply_text(f"⚠️ @{modname} đã là mod!\n⚠️ @{modname} 已经是MOD了！")
                 return
             mods.add(modname)
@@ -154,17 +154,17 @@ async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text(f"✅ Đã thêm @{modname} làm mod!\n✅ 已添加 @{modname} 成为MOD！")
             return
         match_remove = re.match(r"^-\s*@?(\w+)", text)
-        if match_remove:
+    if match_remove:
             modname = match_remove.group(1)
             modname = modname.lstrip('@')
-            if modname.lower() not in {u.lower().lstrip('@') for u in mods}:
+    if modname.lower() not in {u.lower().lstrip('@') for u in mods}:
                 await msg.reply_text(f"⚠️ @{modname} không phải mod!\n⚠️ @{modname} 不是MOD！")
                 return
             mods.discard(modname)
             save_json("mods.json", list(mods))
             await msg.reply_text(f"✅ Đã xoá @{modname} khỏi mod!\n✅ 已从MOD列表移除 @{modname}！")
             return
-        if text.lower() in {"mod", "mods", "danhsachmod", "dsmod"}:
+    if text.lower() in {"mod", "mods", "danhsachmod", "dsmod"}:
             modlist = "\n".join(f"@{m}" for m in mods) or "Không có MOD nào.\n暂无MOD。"
             await msg.reply_text(f"Danh sách mod hiện tại:\n{modlist}\n\n当前MOD列表：\n{modlist}")
             return
@@ -237,7 +237,7 @@ async def handle_payment_invoice(update: Update, context: ContextTypes.DEFAULT_T
 def anyone_is_mod_admin(members):
     """members là list dict chứa user_id, username, status"""
     for m in members:
-        if is_mod(m.get("user_id"), m.get("username")):
+    if is_mod(m.get("user_id"), m.get("username")):
             return True
     return False
 
