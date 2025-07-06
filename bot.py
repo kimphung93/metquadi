@@ -17,6 +17,7 @@ MODEL = "gpt-3.5-turbo"
 
 ADMIN_IDS = ["6902075720", "5195012187"]
 ADMIN_USERNAMES = ["sunshine168888", "white9xinfo"]
+OWNER_USERNAME = "Geoff168"
 
 def is_admin(user_id, username):
     uname = str(username).lstrip('@').lower() if username else ""
@@ -85,8 +86,8 @@ def get_auto_mode(chat_id, mode):
 def is_trivial(text):
     text = text.strip()
     if not text: return True
-    return bool(re.fullmatch(r"[ .!?,:;…/\\\\|()\\[\\]\"'@#%^&*0-9\\-_=+~`♥️❤️👍😂😁🤔🥲😭🙂😉😅😆😇👀🌹💯⭐️🔥🙏🍀🍻🍺🍵☕️]*", text)) \
-        or text.lower() in {"ok", "yes", "no", "thanks", "thx", "vâng", "ừ", "ừm", "uh", "dạ", "được", "hihi", "haha"}
+    return bool(re.fullmatch(r"[ .!?,:;…/\\\\|()\\[\\]\"'@#%^&*0-9\\-_=+~`♥️❤️👍😂😁🤔🥲😭🙂😉😅😆😇👀🌹💯⭐️🔥🙏🍀🍻🍺🍵☕️]*", text)) or \
+        text.lower() in {"ok", "yes", "no", "thanks", "thx", "vâng", "ừ", "ừm", "uh", "dạ", "được", "hihi", "haha"}
 
 def detect_lang(text):
     han_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
@@ -118,62 +119,24 @@ async def offjob(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def out(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_group(update): return
     user = update.effective_user
-    if not is_admin(user.id, user.username):
+    if not is_mod(user.id, user.username):
         await update.message.reply_text("🚫 Bạn không có quyền sử dụng lệnh này\n🚫 您没有权限使用此指令", reply_to_message_id=update.message.message_id)
         return
     await update.message.reply_text("👋 Tạm biệt\n👋 再见", reply_to_message_id=update.message.message_id)
     await context.bot.leave_chat(update.effective_chat.id)
 
-# ========== InlineKeyboard auto menu (cho tất cả auto) ==========
-async def automenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Bật auto dịch", callback_data="auto_on"),
-         InlineKeyboardButton("Tắt auto dịch", callback_data="auto_off")],
-        [InlineKeyboardButton("Bật auto AI", callback_data="ai_on"),
-         InlineKeyboardButton("Tắt auto AI", callback_data="ai_off")],
-        [InlineKeyboardButton("Bật auto CSKH", callback_data="cskh_on"),
-         InlineKeyboardButton("Tắt auto CSKH", callback_data="cskh_off")],
-    ]
-    await update.message.reply_text(
-        "🎛️ Chọn chức năng auto:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+async def getid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    title = update.effective_chat.title or "(Không có tiêu đề)"
+    await update.message.reply_text(f"📌 ID nhóm: `{chat_id}`\n📘 Tên nhóm: {title}\n📌 群组ID：`{chat_id}`\n📘 群名称：{title}", parse_mode="Markdown")
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    data = query.data
-    chat_id = query.message.chat_id
-
-    if data in {"auto_on", "auto_off", "ai_on", "ai_off", "cskh_on", "cskh_off"}:
-        if not is_mod(user.id, user.username):
-            await query.answer("🚫 Bạn không có quyền thực hiện chức năng này!", show_alert=True)
-            return
-
-    if data == "auto_on":
-        set_auto_mode(chat_id, "auto_translate", True)
-        await query.answer("✅ Đã bật auto dịch!", show_alert=True)
-        await query.edit_message_text("Đã bật auto dịch trong nhóm này.")
-    elif data == "auto_off":
-        set_auto_mode(chat_id, "auto_translate", False)
-        await query.answer("🛑 Đã tắt auto dịch!", show_alert=True)
-        await query.edit_message_text("Đã tắt auto dịch trong nhóm này.")
-    elif data == "ai_on":
-        set_auto_mode(chat_id, "auto_ai", True)
-        await query.answer("✅ Đã bật auto AI!", show_alert=True)
-        await query.edit_message_text("Đã bật auto AI trong nhóm này.")
-    elif data == "ai_off":
-        set_auto_mode(chat_id, "auto_ai", False)
-        await query.answer("🛑 Đã tắt auto AI!", show_alert=True)
-        await query.edit_message_text("Đã tắt auto AI trong nhóm này.")
-    elif data == "cskh_on":
-        set_auto_mode(chat_id, "auto_cskh", True)
-        await query.answer("✅ Đã bật auto CSKH!", show_alert=True)
-        await query.edit_message_text("Đã bật auto CSKH trong nhóm này.")
-    elif data == "cskh_off":
-        set_auto_mode(chat_id, "auto_cskh", False)
-        await query.answer("🛑 Đã tắt auto CSKH!", show_alert=True)
-        await query.edit_message_text("Đã tắt auto CSKH trong nhóm này.")
+async def delldata(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_mod(user.id, user.username):
+        await update.message.reply_text("🚫 Bạn không có quyền xoá dữ liệu bot\n🚫 您没有权限清除机器人记忆", reply_to_message_id=update.message.message_id)
+        return
+    reset_history(update.effective_chat.id)
+    await update.message.reply_text("🧹 Đã xoá lịch sử ghi nhớ của bot trong nhóm này\n🧹 已清除本群组的聊天记录", reply_to_message_id=update.message.message_id)
 
 # ========== MENU ==========
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -183,7 +146,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 **HƯỚNG DẪN SỬ DỤNG BOT** – 机器人使用说明\n",
         "/      – Dịch 1 lần – 翻译一次",
         "/;     – AI trả lời 1 lần – AI问答一次",
-        "/-     – Hỗ trợ chuyên ngành 1 lần – 专业客服一次"
+        "/-     – Hỗ trợ chuyên ngành 1 lần – 专业客服一次",
+        "/getid – Lấy ID nhóm – 获取群组ID",
+        "/delldata – Xoá dữ liệu nhóm – 清除群记忆"
     ]
     if mod:
         menu += [
@@ -201,45 +166,106 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(menu)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+# ========== InlineKeyboard auto menu ==========
+async def automenu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Bật auto dịch", callback_data="auto_on"),
+         InlineKeyboardButton("Tắt auto dịch", callback_data="auto_off")],
+        [InlineKeyboardButton("Bật auto AI", callback_data="ai_on"),
+         InlineKeyboardButton("Tắt auto AI", callback_data="ai_off")],
+        [InlineKeyboardButton("Bật auto CSKH", callback_data="cskh_on"),
+         InlineKeyboardButton("Tắt auto CSKH", callback_data="cskh_off")],
+    ]
+    await update.message.reply_text(
+        "🎛️ Chọn chức năng auto:\n🎛️ 选择自动功能：",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = query.from_user
+    data = query.data
+    chat_id = query.message.chat_id
+
+    if data in {"auto_on", "auto_off", "ai_on", "ai_off", "cskh_on", "cskh_off"}:
+        if not is_mod(user.id, user.username):
+            await query.answer("🚫 Bạn không có quyền thực hiện chức năng này!\n🚫 您没有权限执行该功能！", show_alert=True)
+            return
+
+    if data == "auto_on":
+        set_auto_mode(chat_id, "auto_translate", True)
+        await query.answer("✅ Đã bật auto dịch!\n✅ 已开启自动翻译！", show_alert=True)
+        await query.edit_message_text("Đã bật auto dịch trong nhóm này.\n本群已开启自动翻译。")
+    elif data == "auto_off":
+        set_auto_mode(chat_id, "auto_translate", False)
+        await query.answer("🛑 Đã tắt auto dịch!\n🛑 已关闭自动翻译！", show_alert=True)
+        await query.edit_message_text("Đã tắt auto dịch trong nhóm này.\n本群已关闭自动翻译。")
+    elif data == "ai_on":
+        set_auto_mode(chat_id, "auto_ai", True)
+        await query.answer("✅ Đã bật auto AI!\n✅ 已开启自动问答！", show_alert=True)
+        await query.edit_message_text("Đã bật auto AI trong nhóm này.\n本群已开启自动问答。")
+    elif data == "ai_off":
+        set_auto_mode(chat_id, "auto_ai", False)
+        await query.answer("🛑 Đã tắt auto AI!\n🛑 已关闭自动问答！", show_alert=True)
+        await query.edit_message_text("Đã tắt auto AI trong nhóm này.\n本群已关闭自动问答。")
+    elif data == "cskh_on":
+        set_auto_mode(chat_id, "auto_cskh", True)
+        await query.answer("✅ Đã bật auto CSKH!\n✅ 已开启自动专业客服！", show_alert=True)
+        await query.edit_message_text("Đã bật auto CSKH trong nhóm này.\n本群已开启自动专业客服。")
+    elif data == "cskh_off":
+        set_auto_mode(chat_id, "auto_cskh", False)
+        await query.answer("🛑 Đã tắt auto CSKH!\n🛑 已关闭自动专业客服！", show_alert=True)
+        await query.edit_message_text("Đã tắt auto CSKH trong nhóm này.\n本群已关闭自动专业客服。")
+
 # ========== ADMIN/MOD (quản lý mod trong private) ==========
 async def handle_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg: Message = update.message
     user = update.effective_user
     username = (user.username or "").lstrip('@')
-    if not is_admin(user.id, user.username):
+
+    # --- Lệnh /hello ---
+    if msg.text and msg.text.lower().startswith("/hello"):
+        if not is_mod(user.id, user.username):
+            return  # Không trả lời người lạ!
+        if username.lower() == OWNER_USERNAME.lower():
+            await msg.reply_text("你好老板! Sếp có gì cần dặn dò nè! 👋")
+        else:
+            await msg.reply_text(f"Chào {username}! Bạn có gì cần dặn dò nè! 👋\n你有什么指示吗？\n\n- /yeucau (hoặc /要求) để gửi yêu cầu dịch đặc biệt\n- /thongbao (hoặc /通知) để lên lịch gửi thông báo nhóm\n- /mod: Quản lý mod (admin mới thấy)\n- /menu: Hướng dẫn lệnh")
         return
 
-    text = (msg.text or "").strip()
-    if not text: return
-    match_add = re.match(r"^\+\s*@?(\w+)", text)
-    if match_add:
-        modname = match_add.group(1)
-        modname = modname.lstrip('@')
-        if modname.lower() in [u.lower() for u in ADMIN_USERNAMES]:
-            await msg.reply_text(f"❌ Không thể thêm admin làm mod!\n❌ 不能把管理员加入MOD列表！")
+    # --- Lệnh quản lý mod chỉ admin thấy ---
+    if is_admin(user.id, user.username):
+        text = (msg.text or "").strip()
+        if not text: return
+        match_add = re.match(r"^\+\s*@?(\w+)", text)
+        if match_add:
+            modname = match_add.group(1)
+            modname = modname.lstrip('@')
+            if modname.lower() in [u.lower() for u in ADMIN_USERNAMES]:
+                await msg.reply_text(f"❌ Không thể thêm admin làm mod!\n❌ 不能把管理员加入MOD列表！")
+                return
+            if modname.lower() in {u.lower().lstrip('@') for u in mods}:
+                await msg.reply_text(f"⚠️ @{modname} đã là mod!\n⚠️ @{modname} 已经是MOD了！")
+                return
+            mods.add(modname)
+            save_json("mods.json", list(mods))
+            await msg.reply_text(f"✅ Đã thêm @{modname} làm mod!\n✅ 已添加 @{modname} 成为MOD！")
             return
-        if modname.lower() in {u.lower().lstrip('@') for u in mods}:
-            await msg.reply_text(f"⚠️ @{modname} đã là mod!\n⚠️ @{modname} 已经是MOD了！")
+        match_remove = re.match(r"^-\s*@?(\w+)", text)
+        if match_remove:
+            modname = match_remove.group(1)
+            modname = modname.lstrip('@')
+            if modname.lower() not in {u.lower().lstrip('@') for u in mods}:
+                await msg.reply_text(f"⚠️ @{modname} không phải mod!\n⚠️ @{modname} 不是MOD！")
+                return
+            mods.discard(modname)
+            save_json("mods.json", list(mods))
+            await msg.reply_text(f"✅ Đã xoá @{modname} khỏi mod!\n✅ 已从MOD列表移除 @{modname}！")
             return
-        mods.add(modname)
-        save_json("mods.json", list(mods))
-        await msg.reply_text(f"✅ Đã thêm @{modname} làm mod!\n✅ 已添加 @{modname} 成为MOD！")
-        return
-    match_remove = re.match(r"^-\s*@?(\w+)", text)
-    if match_remove:
-        modname = match_remove.group(1)
-        modname = modname.lstrip('@')
-        if modname.lower() not in {u.lower().lstrip('@') for u in mods}:
-            await msg.reply_text(f"⚠️ @{modname} không phải mod!\n⚠️ @{modname} 不是MOD！")
+        if text.lower() in {"mod", "mods", "danhsachmod", "dsmod"}:
+            modlist = "\n".join(f"@{m}" for m in mods) or "Không có MOD nào.\n暂无MOD。"
+            await msg.reply_text(f"Danh sách mod hiện tại:\n{modlist}\n\n当前MOD列表：\n{modlist}")
             return
-        mods.discard(modname)
-        save_json("mods.json", list(mods))
-        await msg.reply_text(f"✅ Đã xoá @{modname} khỏi mod!\n✅ 已从MOD列表移除 @{modname}！")
-        return
-    if text.lower() in {"mod", "mods", "danhsachmod", "dsmod"}:
-        modlist = "\n".join(f"@{m}" for m in mods) or "Không có MOD nào.\n暂无MOD。"
-        await msg.reply_text(f"Danh sách mod hiện tại:\n{modlist}\n\n当前MOD列表：\n{modlist}")
-        return
 
 # ========== Xử lý tin nhắn nhóm ==========
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -299,7 +325,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # --- Dịch 1 lần ---
-    if text.strip().startswith("/") and not text.strip().startswith(("/auto", "/off", "/;auto", "/;off", "/-auto", "/-off", "/onjob", "/offjob", "/out", "/automenu")):
+    if text.strip().startswith("/") and not text.strip().startswith(("/auto", "/off", "/;auto", "/;off", "/-auto", "/-off", "/onjob", "/offjob", "/out", "/automenu", "/getid", "/delldata", "/menu")):
         content = text.strip()[1:].strip()
         if not content or is_trivial(content):
             return
@@ -399,11 +425,14 @@ async def cskh_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, content
 # ========== Main ==========
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("getid", getid))
+    app.add_handler(CommandHandler("delldata", delldata))
     app.add_handler(CommandHandler("onjob", onjob))
     app.add_handler(CommandHandler("offjob", offjob))
     app.add_handler(CommandHandler("out", out))
-    app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("automenu", automenu))
+    app.add_handler(CommandHandler("hello", handle_private))  # Xử lý lệnh hello riêng tư
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_group_message))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_private))
